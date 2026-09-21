@@ -58,20 +58,41 @@ class _RawSSMLCommunicate(edge_tts.Communicate):
         self.texts = [ssml.encode("utf-8")]
 
 
+def _ffmpeg_exe() -> str:
+    """ffmpeg binary that works everywhere, including Streamlit Cloud.
+
+    Streamlit Cloud has no ffprobe and no guaranteed ffmpeg, so we bundle a
+    static ffmpeg via imageio-ffmpeg (pip wheel). Falls back to PATH ffmpeg.
+    """
+    if _ffmpeg_exe.exe is None:  # type: ignore[attr-defined]
+        try:
+            import imageio_ffmpeg
+            _ffmpeg_exe.exe = imageio_ffmpeg.get_ffmpeg_exe()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            _ffmpeg_exe.exe = "ffmpeg"  # type: ignore[attr-defined]
+    return _ffmpeg_exe.exe  # type: ignore[attr-defined]
+
+
+_ffmpeg_exe.exe = None  # type: ignore[attr-defined]
+
+
 def _run(cmd: List[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True)
 
 
 def _duration(path: str) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "json", path],
-        check=True, capture_output=True, text=True)
-    return float(json.loads(out.stdout)["format"]["duration"])
+    # ffprobe is not available on Streamlit Cloud; parse `ffmpeg -i` output.
+    out = subprocess.run([_ffmpeg_exe(), "-i", path],
+                         capture_output=True, text=True)
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", out.stderr)
+    if not m:
+        raise RuntimeError(f"Could not read audio duration: {path}")
+    h, mi, s = m.groups()
+    return int(h) * 3600 + int(mi) * 60 + float(s)
 
 
 def _make_silence(duration_s: float, out_path: str) -> str:
-    _run(["ffmpeg", "-y", "-f", "lavfi",
+    _run([_ffmpeg_exe(), "-y", "-f", "lavfi",
           "-i", f"anullsrc=r={SAMPLE_RATE}:cl=mono",
           "-t", f"{duration_s:.3f}",
           "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
@@ -335,7 +356,7 @@ def generate_voiceover(text: str,
     try:
         if progress_cb:
             progress_cb(0.96, "Joining final audio...")
-        _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        _run([_ffmpeg_exe(), "-y", "-f", "concat", "-safe", "0",
               "-i", list_file,
               "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
               final])
