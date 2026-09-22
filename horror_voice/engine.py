@@ -91,6 +91,36 @@ def _duration(path: str) -> float:
     return int(h) * 3600 + int(mi) * 60 + float(s)
 
 
+def _master_voiceover(raw_path: str, out_path: str) -> str:
+    """Pro mastering chain (v2, user-approved 2026-09-21).
+
+    - faint pink-noise room tone bed so silences feel like a real room,
+      not dead digital cuts
+    - gentle high-pass + compression + loudnorm to YouTube -16 LUFS
+    Uses the bundled ffmpeg so it works on Streamlit Cloud too.
+    """
+    dur = _duration(raw_path)
+    bed = raw_path + ".bed.wav"
+    exe = _ffmpeg_exe()
+    try:
+        _run([exe, "-y", "-f", "lavfi",
+              "-i", f"anoisesrc=color=pink:duration={dur + 1:.2f}:seed=7",
+              "-af", "lowpass=f=500,volume=0.015",
+              "-ar", str(SAMPLE_RATE), "-ac", "1", bed])
+        _run([exe, "-y", "-i", raw_path, "-i", bed,
+              "-filter_complex",
+              "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0,"
+              "highpass=f=50,"
+              "acompressor=threshold=-20dB:ratio=2:attack=20:release=200,"
+              "loudnorm=I=-16:TP=-1.5:LRA=11",
+              "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
+              out_path])
+    finally:
+        if os.path.exists(bed):
+            os.unlink(bed)
+    return out_path
+
+
 def _make_silence(duration_s: float, out_path: str) -> str:
     _run([_ffmpeg_exe(), "-y", "-f", "lavfi",
           "-i", f"anullsrc=r={SAMPLE_RATE}:cl=mono",
@@ -355,13 +385,18 @@ def generate_voiceover(text: str,
     final = os.path.join(out_dir, "voiceover.mp3")
     try:
         if progress_cb:
-            progress_cb(0.96, "Joining final audio...")
+            progress_cb(0.94, "Joining final audio...")
         _run([_ffmpeg_exe(), "-y", "-f", "concat", "-safe", "0",
               "-i", list_file,
               "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
-              final])
+              final + ".raw.mp3"])
     finally:
         os.unlink(list_file)
+
+    if progress_cb:
+        progress_cb(0.97, "Applying pro mastering...")
+    _master_voiceover(final + ".raw.mp3", final)
+    os.unlink(final + ".raw.mp3")
 
     meta = {"default_voice": voice, "sentences": len(sentences),
             "units": len(units),
