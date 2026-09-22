@@ -112,8 +112,10 @@ def _master_voiceover(raw_path: str, out_path: str) -> str:
               "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0,"
               "highpass=f=50,"
               "acompressor=threshold=-20dB:ratio=2:attack=20:release=200,"
-              "loudnorm=I=-16:TP=-1.5:LRA=11",
-              "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
+              "loudnorm=I=-16:TP=-1.5:LRA=11,"
+              "alimiter=limit=0.891:attack=7:release=100:level_in=1:level_out=0.891",
+              "-c:a", "libmp3lame", "-b:a", "96k",
+              "-ar", str(SAMPLE_RATE), "-ac", "1",
               out_path])
     finally:
         if os.path.exists(bed):
@@ -125,7 +127,7 @@ def _make_silence(duration_s: float, out_path: str) -> str:
     _run([_ffmpeg_exe(), "-y", "-f", "lavfi",
           "-i", f"anullsrc=r={SAMPLE_RATE}:cl=mono",
           "-t", f"{duration_s:.3f}",
-          "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
+          "-c:a", "libmp3lame", "-b:a", "96k", "-ar", str(SAMPLE_RATE), "-ac", "1",
           out_path])
     return out_path
 
@@ -388,7 +390,8 @@ def generate_voiceover(text: str,
             progress_cb(0.94, "Joining final audio...")
         _run([_ffmpeg_exe(), "-y", "-f", "concat", "-safe", "0",
               "-i", list_file,
-              "-c:a", "libmp3lame", "-ar", str(SAMPLE_RATE), "-ac", "1",
+              "-c:a", "libmp3lame", "-b:a", "96k",
+              "-ar", str(SAMPLE_RATE), "-ac", "1",
               final + ".raw.mp3"])
     finally:
         os.unlink(list_file)
